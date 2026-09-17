@@ -236,7 +236,7 @@ final class DayflowBackendProvider {
         )
       }
 
-      var urlRequest = URLRequest(url: url)
+      var urlRequest = LLMRequestTimeout.request(url: url)
       urlRequest.httpMethod = "POST"
       urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
       urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -248,7 +248,7 @@ final class DayflowBackendProvider {
       )
 
       let requestByteCount = urlRequest.httpBody?.count ?? 0
-      let (data, response) = try await URLSession.shared.data(for: urlRequest)
+      let (data, response) = try await LLMHTTPSession.session(for: urlRequest).data(for: urlRequest)
       responseByteCount = data.count
 
       guard let httpResponse = response as? HTTPURLResponse else {
@@ -411,7 +411,7 @@ final class DayflowBackendProvider {
     var responseByteCount = 0
 
     do {
-      var urlRequest = URLRequest(url: url)
+      var urlRequest = LLMRequestTimeout.request(url: url)
       urlRequest.httpMethod = "POST"
       urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
       urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -419,7 +419,7 @@ final class DayflowBackendProvider {
       urlRequest.httpBody = try JSONEncoder().encode(payload)
 
       let requestByteCount = urlRequest.httpBody?.count ?? 0
-      let (data, response) = try await URLSession.shared.data(for: urlRequest)
+      let (data, response) = try await LLMHTTPSession.session(for: urlRequest).data(for: urlRequest)
       responseByteCount = data.count
 
       guard let httpResponse = response as? HTTPURLResponse else {
@@ -572,7 +572,7 @@ final class DayflowBackendProvider {
     var responseByteCount = 0
 
     do {
-      var urlRequest = URLRequest(url: url)
+      var urlRequest = LLMRequestTimeout.request(url: url)
       urlRequest.httpMethod = "POST"
       urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
       urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -580,7 +580,7 @@ final class DayflowBackendProvider {
       urlRequest.httpBody = try JSONEncoder().encode(payload)
 
       let requestByteCount = urlRequest.httpBody?.count ?? 0
-      let (data, response) = try await URLSession.shared.data(for: urlRequest)
+      let (data, response) = try await LLMHTTPSession.session(for: urlRequest).data(for: urlRequest)
       responseByteCount = data.count
 
       guard let httpResponse = response as? HTTPURLResponse else {

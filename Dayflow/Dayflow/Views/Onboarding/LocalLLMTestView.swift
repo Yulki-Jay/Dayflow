@@ -198,7 +198,7 @@ struct LocalLLMTestView: View {
       maxTokens: 10
     )
 
-    var request = URLRequest(url: url)
+    var request = LLMRequestTimeout.request(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     if engine == .lmstudio {
@@ -210,11 +210,11 @@ struct LocalLLMTestView: View {
     let encoder = JSONEncoder()
     encoder.keyEncodingStrategy = .convertToSnakeCase
     request.httpBody = try? encoder.encode(payload)
-    request.timeoutInterval = 35
+
 
     let startedAt = Date()
 
-    URLSession.shared.dataTask(with: request) { data, response, error in
+    LLMHTTPSession.session(for: request).dataTask(with: request) { data, response, error in
       DispatchQueue.main.async {
         let duration = Date().timeIntervalSince(startedAt)
         if enforcesLocalLatencyLimit && duration > LocalLLMTestConstants.maxLatency {

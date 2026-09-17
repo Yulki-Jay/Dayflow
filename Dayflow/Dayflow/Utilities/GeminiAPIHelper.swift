@@ -22,7 +22,7 @@ final class GeminiAPIHelper {
 
   private init() {
     requestData = { request in
-      try await URLSession.shared.data(for: request)
+      try await LLMHTTPSession.session(for: request).data(for: request)
     }
     logsRequests = true
   }
@@ -96,7 +96,7 @@ final class GeminiAPIHelper {
       string:
         "https://generativelanguage.googleapis.com/v1beta/models/\(model.rawValue):generateContent?key=\(apiKey)"
     )!
-    var request = URLRequest(url: url)
+    var request = LLMRequestTimeout.request(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 

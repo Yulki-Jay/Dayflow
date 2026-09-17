@@ -13,14 +13,14 @@ extension GeminiDirectProvider {
       contents: contents,
       includeThinkingConfig: includeThinkingConfig
     )
-    var request = URLRequest(
+    var request = LLMRequestTimeout.request(
       url: URL(string: dashboardStreamEndpoint(model: model) + "?alt=sse&key=\(apiKey)")!)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.timeoutInterval = 180
+
     request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+    let (bytes, response) = try await LLMHTTPSession.session(for: request).bytes(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
       throw NSError(
         domain: "GeminiDashboardChat",
@@ -104,14 +104,14 @@ extension GeminiDirectProvider {
       contents: contents,
       includeThinkingConfig: includeThinkingConfig
     )
-    var request = URLRequest(
+    var request = LLMRequestTimeout.request(
       url: URL(string: dashboardGenerateEndpoint(model: model) + "?key=\(apiKey)")!)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.timeoutInterval = 180
+
     request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-    let (data, response) = try await URLSession.shared.data(for: request)
+    let (data, response) = try await LLMHTTPSession.session(for: request).data(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
       throw NSError(
         domain: "GeminiDashboardChat",

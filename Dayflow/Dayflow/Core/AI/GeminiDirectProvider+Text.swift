@@ -29,14 +29,14 @@ extension GeminiDirectProvider {
         let activeModel = modelState.current
         let urlWithKey = endpointForModel(activeModel) + "?key=\(apiKey)"
 
-        var request = URLRequest(url: URL(string: urlWithKey)!)
+        var request = LLMRequestTimeout.request(url: URL(string: urlWithKey)!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 120
+
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
         let requestStart = Date()
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await LLMHTTPSession.session(for: request).data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
           throw NSError(

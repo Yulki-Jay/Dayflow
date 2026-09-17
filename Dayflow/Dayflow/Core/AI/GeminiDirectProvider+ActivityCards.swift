@@ -392,16 +392,16 @@ extension GeminiDirectProvider {
 
     // Single API call (retry logic handled by outer loop in generateActivityCards)
     let urlWithKey = endpointForModel(model) + "?key=\(apiKey)"
-    var request = URLRequest(url: URL(string: urlWithKey)!)
+    var request = LLMRequestTimeout.request(url: URL(string: urlWithKey)!)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.timeoutInterval = 120  // 2 minutes timeout
+
     let requestStart = Date()
 
     do {
       request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-      let (data, response) = try await URLSession.shared.data(for: request)
+      let (data, response) = try await LLMHTTPSession.session(for: request).data(for: request)
       let requestDuration = Date().timeIntervalSince(requestStart)
 
       guard let httpResponse = response as? HTTPURLResponse else {

@@ -13,10 +13,9 @@ extension GemmaBackupProvider {
     logRequestBody: Bool
   ) async throws -> String {
     let url = URL(string: "\(baseURL)/\(model):generateContent?key=\(apiKey)")!
-    var request = URLRequest(url: url)
+    var request = LLMRequestTimeout.request(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.timeoutInterval = 120
 
     let requestBody: [String: Any] = [
       "contents": [["parts": parts]],
@@ -49,7 +48,7 @@ extension GemmaBackupProvider {
     let data: Data
     let response: URLResponse
     do {
-      (data, response) = try await URLSession.shared.data(for: request)
+      (data, response) = try await LLMHTTPSession.session(for: request).data(for: request)
     } catch {
       LLMLogger.logFailure(
         ctx: ctx,

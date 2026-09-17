@@ -127,13 +127,13 @@ extension GeminiDirectProvider {
   }
 
   func uploadSimple(data: Data, mimeType: String) async throws -> String {
-    var request = URLRequest(url: URL(string: fileEndpoint + "?key=\(apiKey)")!)
+    var request = LLMRequestTimeout.request(url: URL(string: fileEndpoint + "?key=\(apiKey)")!)
     request.httpMethod = "POST"
     request.setValue(mimeType, forHTTPHeaderField: "Content-Type")
     request.httpBody = data
 
     let requestStart = Date()
-    let (responseData, response) = try await URLSession.shared.data(for: request)
+    let (responseData, response) = try await LLMHTTPSession.session(for: request).data(for: request)
     let requestDuration = Date().timeIntervalSince(requestStart)
     let statusCode = (response as? HTTPURLResponse)?.statusCode
     logCallDuration(operation: "upload.simple", duration: requestDuration, status: statusCode)
@@ -165,7 +165,7 @@ extension GeminiDirectProvider {
     body.append(try JSONEncoder().encode(metadata))
     body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
 
-    var request = URLRequest(url: URL(string: fileEndpoint + "?key=\(apiKey)")!)
+    var request = LLMRequestTimeout.request(url: URL(string: fileEndpoint + "?key=\(apiKey)")!)
     request.httpMethod = "POST"
     request.setValue("resumable", forHTTPHeaderField: "X-Goog-Upload-Protocol")
     request.setValue("start", forHTTPHeaderField: "X-Goog-Upload-Command")
@@ -175,7 +175,7 @@ extension GeminiDirectProvider {
     request.httpBody = try JSONEncoder().encode(metadata)
 
     let startTime = Date()
-    let (responseData, response) = try await URLSession.shared.data(for: request)
+    let (responseData, response) = try await LLMHTTPSession.session(for: request).data(for: request)
     let initDuration = Date().timeIntervalSince(startTime)
 
     guard let httpResponse = response as? HTTPURLResponse else {
@@ -200,14 +200,14 @@ extension GeminiDirectProvider {
         userInfo: [NSLocalizedDescriptionKey: "No upload URL in response"])
     }
 
-    var uploadRequest = URLRequest(url: URL(string: uploadURL)!)
+    var uploadRequest = LLMRequestTimeout.request(url: URL(string: uploadURL)!)
     uploadRequest.httpMethod = "PUT"
     uploadRequest.setValue("upload, finalize", forHTTPHeaderField: "X-Goog-Upload-Command")
     uploadRequest.setValue("0", forHTTPHeaderField: "X-Goog-Upload-Offset")
     uploadRequest.httpBody = data
 
     let uploadStartTime = Date()
-    let (uploadResponseData, uploadResponse) = try await URLSession.shared.data(for: uploadRequest)
+    let (uploadResponseData, uploadResponse) = try await LLMHTTPSession.session(for: uploadRequest).data(for: uploadRequest)
     let uploadDuration = Date().timeIntervalSince(uploadStartTime)
 
     guard let httpUploadResponse = uploadResponse as? HTTPURLResponse else {
@@ -253,7 +253,8 @@ extension GeminiDirectProvider {
     }
 
     let requestStart = Date()
-    let (data, response) = try await URLSession.shared.data(from: url)
+    let request = LLMRequestTimeout.request(url: url)
+    let (data, response) = try await LLMHTTPSession.session(for: request).data(for: request)
     let requestDuration = Date().timeIntervalSince(requestStart)
     let statusCode = (response as? HTTPURLResponse)?.statusCode
     logCallDuration(operation: "file.status", duration: requestDuration, status: statusCode)

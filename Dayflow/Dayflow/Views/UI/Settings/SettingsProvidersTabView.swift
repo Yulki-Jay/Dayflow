@@ -5,6 +5,8 @@ struct SettingsProvidersTabView: View {
   @ObservedObject var viewModel: ProvidersSettingsViewModel
   @ObservedObject private var authManager = DayflowAuthManager.shared
 
+  @AppStorage(LLMRequestTimeout.key) private var apiTimeout = LLMRequestTimeout.defaultSeconds
+
   var body: some View {
     VStack(alignment: .leading, spacing: SettingsStyle.sectionSpacing) {
       if viewModel.currentProvider == .local, viewModel.showLocalModelUpgradeBanner {
@@ -32,6 +34,7 @@ struct SettingsProvidersTabView: View {
       }
 
       currentConfigurationSection
+      apiTimeoutSection
       connectionHealthSection
       failoverRoutingSection
 
@@ -43,6 +46,18 @@ struct SettingsProvidersTabView: View {
       if viewModel.hasCodexOrClaudeProviderInRouting {
         agentPromptCustomizationSection
       }
+    }
+  }
+
+  private var apiTimeoutSection: some View {
+    SettingsSection(
+      title: String(localized: "API request timeout"),
+      subtitle: String(localized: "Applies to HTTP model requests, uploads and connection tests. New requests use this limit for both waiting for data and the entire transfer. CLI process limits are separate.")
+    ) {
+      Stepper(value: $apiTimeout, in: LLMRequestTimeout.range, step: 30) {
+        Text("Timeout: \(Int(LLMRequestTimeout.seconds())) seconds")
+      }
+      .onAppear { apiTimeout = LLMRequestTimeout.seconds() }
     }
   }
 

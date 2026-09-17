@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Timeout: %lld seconds" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超时时间：%lld 秒"
+          }
+        }
+      }
+    },
+    "Applies to HTTP model requests, uploads and connection tests. New requests use this limit for both waiting for data and the entire transfer. CLI process limits are separate." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "适用于 HTTP 模型请求、上传和连接测试。新请求的数据等待时间及整次传输均受此上限约束。CLI 进程使用独立时限。"
+          }
+        }
+      }
+    },
+    "API request timeout" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 请求超时"
+          }
+        }
+      }
+    },
     "" : {
 
     },

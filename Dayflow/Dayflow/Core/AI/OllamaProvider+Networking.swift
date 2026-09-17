@@ -49,7 +49,7 @@ extension OllamaProvider {
   func makeChatURLRequest(
     _ request: ChatRequest,
     url: URL? = nil,
-    timeoutInterval: TimeInterval = 60.0
+    timeoutInterval: TimeInterval = LLMRequestTimeout.seconds()
   ) throws -> URLRequest {
     guard let resolvedURL = url ?? LocalEndpointUtilities.chatCompletionsURL(baseURL: endpoint)
     else {
@@ -58,7 +58,7 @@ extension OllamaProvider {
         userInfo: [NSLocalizedDescriptionKey: "Invalid local endpoint URL"])
     }
 
-    var urlRequest = URLRequest(url: resolvedURL)
+    var urlRequest = LLMRequestTimeout.request(url: resolvedURL)
     urlRequest.httpMethod = "POST"
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     applyAuthorizationHeader(to: &urlRequest)
@@ -113,7 +113,7 @@ extension OllamaProvider {
           startedAt: start
         )
         ctxForAttempt = ctx
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        let (data, response) = try await LLMHTTPSession.session(for: urlRequest).data(for: urlRequest)
         let requestDuration = Date().timeIntervalSince(start)
         let statusCode = (response as? HTTPURLResponse)?.statusCode
         logCallDuration(operation: operation, duration: requestDuration, status: statusCode)
