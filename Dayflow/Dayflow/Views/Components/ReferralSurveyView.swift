@@ -16,7 +16,6 @@ struct ReferralSurveyView: View {
   private let externalSelectedReferral: Binding<ReferralOption?>?
   private let externalCustomReferral: Binding<String>?
 
-  // Resolve State bindings after initialization, when SwiftUI has installed them.
   private var selectedReferralBinding: Binding<ReferralOption?> {
     externalSelectedReferral ?? $internalSelectedReferral
   }
