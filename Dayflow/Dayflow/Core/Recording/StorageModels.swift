@@ -21,7 +21,7 @@ struct Observation: Codable, Sendable {
 }
 
 // Re-add Distraction struct, as it's used by TimelineCard
-struct Distraction: Codable, Sendable, Identifiable {
+struct Distraction: Codable, Sendable, Identifiable, Equatable {
   let id: UUID
   let startTime: String
   let endTime: String

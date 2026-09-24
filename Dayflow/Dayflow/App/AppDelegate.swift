@@ -165,6 +165,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     NotificationService.shared.start()
     SupportChatSession.shared.start()
 
+    // Publish a web-friendly timeline snapshot when WebDAV auto-sync is enabled.
+    WebDAVAutomaticSyncScheduler.shared.start()
+
     // Start daily recap generation scheduler (checks every 5 minutes)
     DailyRecapScheduler.shared.start()
 

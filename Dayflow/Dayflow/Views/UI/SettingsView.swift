@@ -44,6 +44,7 @@ struct SettingsView: View {
   @StateObject private var providersViewModel = ProvidersSettingsViewModel()
   @StateObject private var otherViewModel = OtherSettingsViewModel()
   @StateObject private var agentAccessViewModel = AgentAccessViewModel()
+  @StateObject private var webDAVViewModel = WebDAVSettingsViewModel()
 
   var body: some View {
     contentWithSheets
@@ -264,7 +265,7 @@ struct SettingsView: View {
       case .aiTools:
         SettingsAgentAccessTabView(viewModel: agentAccessViewModel)
       case .data:
-        SettingsDataTabView(viewModel: otherViewModel)
+        SettingsDataTabView(viewModel: otherViewModel, webDAVViewModel: webDAVViewModel)
       case .other:
         SettingsOtherTabView(viewModel: otherViewModel, launchAtLoginManager: launchAtLoginManager)
       }

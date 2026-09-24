@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsDataTabView: View {
   @ObservedObject var viewModel: OtherSettingsViewModel
+  @ObservedObject var webDAVViewModel: WebDAVSettingsViewModel
   @State private var activeExportDatePicker: ExportDatePicker?
   @State private var isReprocessDatePickerExpanded = false
 
@@ -12,9 +13,169 @@ struct SettingsDataTabView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: SettingsStyle.sectionSpacing) {
+      webDAVSection
       exportSection
       reprocessSection
     }
+  }
+
+  // MARK: - WebDAV
+
+  private var webDAVSection: some View {
+    SettingsSection(
+      title: String(localized: "WebDAV timeline sync"),
+      subtitle: String(localized: "Publish a web-friendly backup that can be read on other devices.")
+    ) {
+      VStack(alignment: .leading, spacing: 12) {
+        webDAVField(
+          title: String(localized: "Server URL"),
+          placeholder: "https://dav.example.com/remote.php/dav/files/name/",
+          text: $webDAVViewModel.serverURL
+        )
+
+        HStack(alignment: .top, spacing: 12) {
+          webDAVField(
+            title: String(localized: "Username"),
+            placeholder: String(localized: "WebDAV username"),
+            text: $webDAVViewModel.username
+          )
+          secureWebDAVField(
+            title: String(localized: "Password"),
+            placeholder: String(localized: "Stored in Keychain"),
+            text: $webDAVViewModel.password
+          )
+        }
+
+        webDAVField(
+          title: String(localized: "Remote sync folder"),
+          placeholder: WebDAVTimelinePreferences.defaultRemotePath,
+          text: $webDAVViewModel.remotePath
+        )
+
+        SettingsRow(
+          label: String(localized: "Automatic sync"),
+          subtitle: String(localized: "Upload on launch and every 15 minutes"),
+          showsDivider: false
+        ) {
+          SettingsToggle(
+            isOn: Binding(
+              get: { webDAVViewModel.automaticSync },
+              set: { enabled in
+                webDAVViewModel.automaticSync = enabled
+                webDAVViewModel.persistAutomaticSync()
+              }
+            )
+          )
+        }
+
+        SettingsRow(
+          label: String(localized: "Sync screenshots and videos"),
+          subtitle: String(localized: "Upload recorded screen content and card thumbnails. About 50–100 MB per 8-hour day at default settings."),
+          showsDivider: false
+        ) {
+          SettingsToggle(isOn: Binding(
+            get: { webDAVViewModel.includeMedia },
+            set: { enabled in
+              webDAVViewModel.includeMedia = enabled
+              webDAVViewModel.persistAutomaticSync()
+            }
+          ))
+        }
+
+        Text(
+          "The sync folder contains timeline data and a media subfolder. Enabling media sync uploads retained recordings and thumbnails; completed files are skipped. Files are not end-to-end encrypted. Turning media sync off does not delete uploaded files. Use a separate folder for each recording Mac."
+        )
+        .font(.custom("Figtree", size: 12))
+        .foregroundColor(SettingsStyle.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+
+        HStack(spacing: 12) {
+          SettingsPrimaryButton(
+            title: webDAVViewModel.isWorking
+              ? String(localized: "Working…") : String(localized: "Sync now"),
+            systemImage: webDAVViewModel.isWorking ? nil : "arrow.triangle.2.circlepath",
+            isLoading: webDAVViewModel.isWorking,
+            isDisabled: !webDAVViewModel.canSubmit,
+            action: webDAVViewModel.syncNow
+          )
+
+          SettingsSecondaryButton(
+            title: String(localized: "Save & test"),
+            systemImage: "network",
+            isDisabled: !webDAVViewModel.canSubmit,
+            action: webDAVViewModel.saveAndTest
+          )
+        }
+
+        if let lastSyncAt = webDAVViewModel.lastSyncAt {
+          Text("Last synced \(lastSyncAt.formatted(date: .abbreviated, time: .shortened))")
+            .font(.custom("Figtree", size: 12))
+            .foregroundColor(SettingsStyle.meta)
+        }
+        if let message = webDAVViewModel.statusMessage {
+          Text(message)
+            .font(.custom("Figtree", size: 12))
+            .foregroundColor(SettingsStyle.statusGood)
+        }
+        if let error = webDAVViewModel.errorMessage {
+          Text(error)
+            .font(.custom("Figtree", size: 12))
+            .foregroundColor(SettingsStyle.destructive)
+            .textSelection(.enabled)
+        }
+      }
+    }
+  }
+
+  private func webDAVField(
+    title: String,
+    placeholder: String,
+    text: Binding<String>
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(title)
+        .font(.custom("Figtree", size: 11))
+        .fontWeight(.semibold)
+        .textCase(.uppercase)
+        .foregroundColor(SettingsStyle.meta)
+      TextField(placeholder, text: text)
+        .textFieldStyle(.plain)
+        .font(.custom("Figtree", size: 13))
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(webDAVFieldBackground)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func secureWebDAVField(
+    title: String,
+    placeholder: String,
+    text: Binding<String>
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(title)
+        .font(.custom("Figtree", size: 11))
+        .fontWeight(.semibold)
+        .textCase(.uppercase)
+        .foregroundColor(SettingsStyle.meta)
+      SecureField(placeholder, text: text)
+        .textFieldStyle(.plain)
+        .font(.custom("Figtree", size: 13))
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(webDAVFieldBackground)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private var webDAVFieldBackground: some View {
+    RoundedRectangle(cornerRadius: 7, style: .continuous)
+      .fill(SettingsStyle.editorFill)
+      .overlay(
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+          .stroke(SettingsStyle.editorBorder, lineWidth: 1)
+      )
   }
 
   // MARK: - Export

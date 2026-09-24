@@ -10,14 +10,12 @@ evals/
 build/
 build_tmp/
 build_universal/
+artifacts/
+release/
 .claude/
 scripts/release.env
 Dayflow/Config/LocalSecrets.xcconfig
 signed/
-
-# Ignore Claude prompt notes
-CLAUDE.md
-claude.md
 
 # Tauri migration (WIP)
 dayflow-tauri/

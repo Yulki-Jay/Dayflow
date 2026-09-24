@@ -61,6 +61,26 @@ final class OpenAICompatibleProviderTests: XCTestCase {
     XCTAssertEqual(result.observations.first?.llmModel, "chosen-model")
   }
 
+  func testNetworkFailureDoesNotTriggerJSONCorrection() async throws {
+    var requests = 0
+    let provider = OpenAICompatibleProvider(configuration: configuration()) { _, _, _ in
+      requests += 1
+      throw URLError(.timedOut)
+    }
+    do {
+      _ = try await provider.generateActivityCards(
+        observations: [],
+        context: ActivityGenerationContext(
+          batchObservations: [], existingCards: [], currentTime: Date(), categories: [],
+          hasPreviousCardWithinFiveMinutes: false),
+        batchId: 1)
+      XCTFail("Expected the network timeout to propagate")
+    } catch {
+      XCTAssertEqual((error as? URLError)?.code, .timedOut)
+    }
+    XCTAssertEqual(requests, 1)
+  }
+
   func testCardRetryRetainsFullContextAndReturnsDetailedCards() async throws {
     let previous = ActivityCardData(
       startTime: "1:00 PM", endTime: "1:15 PM", category: "Work", subcategory: "",
@@ -73,7 +93,7 @@ final class OpenAICompatibleProviderTests: XCTestCase {
     let provider = OpenAICompatibleProvider(configuration: configuration()) { request, _, _ in
       requests += 1
       let prompt = request.messages[1].content[0].text!
-      XCTAssertTrue(prompt.contains("Previous cards:"))
+      XCTAssertTrue(prompt.contains("<previous_cards>"))
       XCTAssertTrue(prompt.contains("Release notes"))
       if requests == 1 { return "[]" }
       XCTAssertTrue(prompt.contains("PREVIOUS ATTEMPT FAILED"))

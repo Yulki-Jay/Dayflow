@@ -163,7 +163,7 @@ struct BatchingConfig {
   )
 }
 
-struct AppSites: Codable {
+struct AppSites: Codable, Equatable, Sendable {
   let primary: String?
   let secondary: String?
 }

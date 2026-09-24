@@ -22,15 +22,32 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+if [[ -f "${SCRIPT_DIR}/release.env" ]]; then
+  # shellcheck disable=SC1090
+  source "${SCRIPT_DIR}/release.env"
+fi
 
 PLIST=${PLIST:-"$REPO_ROOT/Dayflow/Dayflow/Info.plist"}
 APP_NAME=${APP_NAME:-Dayflow}
 SCHEME=${SCHEME:-Dayflow}
 CONFIG=${CONFIG:-Release}
+ARTIFACTS_DIR=${ARTIFACTS_DIR:-"$REPO_ROOT/release"}
 # Optional: override Keychain account name for sign_update; defaults to "ed25519"
 SIGN_ACCOUNT=${SIGN_ACCOUNT:-}
 MSV=${MSV:-13.0}
 DMG_NAME=${DMG_NAME:-"${APP_NAME}.dmg"}
+
+case "${ARTIFACTS_DIR}" in
+  /*) ;;
+  *) ARTIFACTS_DIR="${REPO_ROOT}/${ARTIFACTS_DIR}" ;;
+esac
+
+if [[ "${DMG_NAME}" = /* ]]; then
+  DMG_PATH="${DMG_NAME}"
+else
+  DMG_PATH="${ARTIFACTS_DIR}/${DMG_NAME}"
+fi
+DMG_ASSET_NAME=$(basename "${DMG_PATH}")
 
 MODE=bump_minor
 DRY_RUN=0
@@ -150,15 +167,15 @@ else
   (cd "$REPO_ROOT" && ./scripts/release_dmg.sh)
 fi
 
-[[ -f "$REPO_ROOT/$DMG_NAME" ]] || err "DMG not found: $REPO_ROOT/$DMG_NAME"
+[[ -f "$DMG_PATH" ]] || err "DMG not found: $DMG_PATH"
 
 echo "[3/8] Signing update with Sparkle…"
 if [[ -n "${SPARKLE_PRIVATE_KEY:-}" ]]; then
-  ED_SIG=$(printf "%s\n" "$SPARKLE_PRIVATE_KEY" | sign_update --ed-key-file - -p "$REPO_ROOT/$DMG_NAME")
+  ED_SIG=$(printf "%s\n" "$SPARKLE_PRIVATE_KEY" | sign_update --ed-key-file - -p "$DMG_PATH")
 elif [[ -n "$SIGN_ACCOUNT" ]]; then
-  ED_SIG=$(sign_update --account "$SIGN_ACCOUNT" -p "$REPO_ROOT/$DMG_NAME")
+  ED_SIG=$(sign_update --account "$SIGN_ACCOUNT" -p "$DMG_PATH")
 else
-  ED_SIG=$(sign_update -p "$REPO_ROOT/$DMG_NAME")
+  ED_SIG=$(sign_update -p "$DMG_PATH")
 fi
 [[ -n "$ED_SIG" ]] || err "Could not obtain edSignature from sign_update"
 
@@ -166,12 +183,12 @@ OWNER_REPO=$(git -C "$REPO_ROOT" remote get-url origin | sed -E 's#.*github.com[
 [[ -n "$OWNER_REPO" ]] || err "Unable to detect owner/repo from git remote"
 
 TITLE="$APP_NAME $NEW_SHORT"
-REL_ARGS=("$TAG" "$REPO_ROOT/$DMG_NAME" --title "$TITLE" --draft)
+REL_ARGS=("$TAG" "$DMG_PATH" --title "$TITLE" --draft)
 if [[ -n "$NOTES_FILE" ]]; then REL_ARGS+=(--notes-file "$NOTES_FILE"); fi
 
 if gh release view "$TAG" >/dev/null 2>&1; then
   echo "[4/8] Release $TAG already exists; uploading asset (clobber)…"
-  gh release upload "$TAG" "$REPO_ROOT/$DMG_NAME" --clobber >/dev/null
+  gh release upload "$TAG" "$DMG_PATH" --clobber >/dev/null
 else
   echo "[4/8] Creating draft GitHub release $TAG and uploading asset…"
   gh release create "${REL_ARGS[@]}"
@@ -185,17 +202,17 @@ echo "[6/8] Resolving canonical asset + release URLs…"
 ASSET_URL=""
 for i in {1..10}; do
   ASSET_URL=$(gh release view "$TAG" --json assets --jq \
-    ".assets[] | select(.name==\"$DMG_NAME\").url" 2>/dev/null || true)
+    ".assets[] | select(.name==\"$DMG_ASSET_NAME\").url" 2>/dev/null || true)
   [[ -n "$ASSET_URL" ]] && break
   sleep 2
 done
 RELEASE_URL=$(gh release view "$TAG" --json url --jq .url)
 
-[[ -n "$ASSET_URL" ]] || err "Failed to obtain canonical browser_download_url for $DMG_NAME"
+[[ -n "$ASSET_URL" ]] || err "Failed to obtain canonical browser_download_url for $DMG_ASSET_NAME"
 
 echo "[7/8] Updating appcast (docs/appcast.xml)…"
 "$SCRIPT_DIR/update_appcast.sh" \
-  --dmg "$REPO_ROOT/$DMG_NAME" \
+  --dmg "$DMG_PATH" \
   --url "$ASSET_URL" \
   --short "$NEW_SHORT" \
   --build "$NEW_BUILD" \

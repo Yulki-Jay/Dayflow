@@ -42,7 +42,7 @@ final class OpenAICompatibleProvider: ChatGPTTimelinePromptSupporting {
   {
     if let completion { return try await completion(request, operation, batchId) }
     let response = try await transport.callChatAPI(
-      request, operation: operation, batchId: batchId, maxRetries: 1)
+      request, operation: operation, batchId: batchId, maxRetries: 3)
     return response.choices.first?.message.content ?? ""
   }
 
@@ -54,12 +54,12 @@ final class OpenAICompatibleProvider: ChatGPTTimelinePromptSupporting {
     var currentPrompt = prompt
     for attempt in 1...3 {
       try Task.checkCancellation()
+      let request = makeRequest(
+        content: [
+          .init(type: "text", text: currentPrompt, image_url: nil)
+        ] + images)
+      let output = try await complete(request, operation: operation, batchId: batchId)
       do {
-        let request = makeRequest(
-          content: [
-            .init(type: "text", text: currentPrompt, image_url: nil)
-          ] + images)
-        let output = try await complete(request, operation: operation, batchId: batchId)
         let value = try decode(output)
         return (
           value,
