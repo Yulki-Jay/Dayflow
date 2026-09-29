@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsDataTabView: View {
   @ObservedObject var viewModel: OtherSettingsViewModel
   @ObservedObject var webDAVViewModel: WebDAVSettingsViewModel
+  @ObservedObject private var syncStatus = WebDAVSyncStatus.shared
   @State private var activeExportDatePicker: ExportDatePicker?
   @State private var isReprocessDatePickerExpanded = false
 
@@ -46,6 +47,15 @@ struct SettingsDataTabView: View {
           )
         }
 
+        if webDAVViewModel.password.isEmpty {
+          SettingsSecondaryButton(
+            title: String(localized: "Unlock saved password"),
+            systemImage: "key",
+            isDisabled: webDAVViewModel.isWorking || syncStatus.isSyncing,
+            action: webDAVViewModel.unlockPassword
+          )
+        }
+
         webDAVField(
           title: String(localized: "Remote sync folder"),
           placeholder: WebDAVTimelinePreferences.defaultRemotePath,
@@ -66,6 +76,7 @@ struct SettingsDataTabView: View {
               }
             )
           )
+          .disabled(webDAVViewModel.isWorking || syncStatus.isSyncing)
         }
 
         SettingsRow(
@@ -80,7 +91,12 @@ struct SettingsDataTabView: View {
               webDAVViewModel.persistAutomaticSync()
             }
           ))
+          .disabled(webDAVViewModel.isWorking || syncStatus.isSyncing)
         }
+
+        Text("Changes are saved with Save & test or Sync now. Disabling automatic sync or media uploads takes effect immediately for future syncs.")
+          .font(.custom("Figtree", size: 12))
+          .foregroundColor(SettingsStyle.secondary)
 
         Text(
           "The sync folder contains timeline data and a media subfolder. Enabling media sync uploads retained recordings and thumbnails; completed files are skipped. Files are not end-to-end encrypted. Turning media sync off does not delete uploaded files. Use a separate folder for each recording Mac."
@@ -91,13 +107,14 @@ struct SettingsDataTabView: View {
 
         HStack(spacing: 12) {
           SettingsPrimaryButton(
-            title: webDAVViewModel.isWorking
+            title: webDAVViewModel.isWorking || syncStatus.isSyncing
               ? String(localized: "Working…") : String(localized: "Sync now"),
-            systemImage: webDAVViewModel.isWorking ? nil : "arrow.triangle.2.circlepath",
-            isLoading: webDAVViewModel.isWorking,
+            systemImage: webDAVViewModel.isWorking || syncStatus.isSyncing ? nil : "arrow.triangle.2.circlepath",
+            isLoading: webDAVViewModel.isWorking || syncStatus.isSyncing,
             isDisabled: !webDAVViewModel.canSubmit,
             action: webDAVViewModel.syncNow
           )
+          .accessibilityIdentifier("webdav.sync")
 
           SettingsSecondaryButton(
             title: String(localized: "Save & test"),
@@ -105,19 +122,33 @@ struct SettingsDataTabView: View {
             isDisabled: !webDAVViewModel.canSubmit,
             action: webDAVViewModel.saveAndTest
           )
+          if webDAVViewModel.isWorking || syncStatus.isSyncing {
+            SettingsSecondaryButton(
+              title: String(localized: "Cancel"), systemImage: "xmark",
+              action: webDAVViewModel.cancel
+            )
+            .accessibilityIdentifier("webdav.cancel")
+          }
         }
 
-        if let lastSyncAt = webDAVViewModel.lastSyncAt {
+        if let phase = syncStatus.phase {
+          Text(phase)
+            .font(.custom("Figtree", size: 12))
+            .foregroundColor(SettingsStyle.secondary)
+        }
+        if let lastSyncAt = syncStatus.lastSyncAt ?? webDAVViewModel.lastSyncAt {
           Text("Last synced \(lastSyncAt.formatted(date: .abbreviated, time: .shortened))")
             .font(.custom("Figtree", size: 12))
             .foregroundColor(SettingsStyle.meta)
         }
-        if let message = webDAVViewModel.statusMessage {
+        if let message = webDAVViewModel.statusMessage,
+          !syncStatus.isSyncing, syncStatus.errorMessage == nil, syncStatus.phase == nil {
           Text(message)
             .font(.custom("Figtree", size: 12))
             .foregroundColor(SettingsStyle.statusGood)
         }
-        if let error = webDAVViewModel.errorMessage {
+        if let error = syncStatus.errorMessage
+          ?? (syncStatus.phase == nil ? webDAVViewModel.errorMessage : nil) {
           Text(error)
             .font(.custom("Figtree", size: 12))
             .foregroundColor(SettingsStyle.destructive)
@@ -146,6 +177,7 @@ struct SettingsDataTabView: View {
         .background(webDAVFieldBackground)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .disabled(webDAVViewModel.isWorking || syncStatus.isSyncing)
   }
 
   private func secureWebDAVField(
@@ -167,6 +199,7 @@ struct SettingsDataTabView: View {
         .background(webDAVFieldBackground)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .disabled(webDAVViewModel.isWorking || syncStatus.isSyncing)
   }
 
   private var webDAVFieldBackground: some View {

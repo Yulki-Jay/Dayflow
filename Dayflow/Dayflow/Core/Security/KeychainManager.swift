@@ -16,6 +16,11 @@ final class KeychainManager {
 
   private init() {}
 
+  // Serialize legacy keychain operations while its process-wide UI policy is changed.
+  func withAccess<T>(_ operation: () throws -> T) rethrows -> T {
+    try queue.sync(execute: operation)
+  }
+
   /// Stores an API key in the keychain
   /// - Parameters:
   ///   - apiKey: The API key to store
@@ -122,6 +127,97 @@ final class KeychainManager {
 
       return apiKey
     }
+  }
+
+  enum ReadError: LocalizedError, Equatable {
+    case status(OSStatus)
+    case invalidData
+
+    var errorDescription: String? {
+      switch self {
+      case .status(errSecInteractionNotAllowed), .status(errSecAuthFailed):
+        return String(localized: "Keychain access is locked or requires approval. Use Unlock saved password in WebDAV settings.")
+      case .status(errSecUserCanceled):
+        return String(localized: "Keychain access was cancelled.")
+      case .status(let status):
+        return SecCopyErrorMessageString(status, nil) as String?
+      case .invalidData:
+        return String(localized: "The saved password could not be decoded. Enter it again in WebDAV settings.")
+      }
+    }
+  }
+
+  func readPassword(
+    for provider: String, allowInteraction: Bool,
+    lookup: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = KeychainManager.copyLegacyPassword
+  ) throws -> String? {
+    try queue.sync {
+      var previousInteractionAllowed: DarwinBoolean = true
+      if !allowInteraction {
+        let status = SecKeychainGetUserInteractionAllowed(&previousInteractionAllowed)
+        guard status == errSecSuccess else { throw ReadError.status(status) }
+        // LAContext alone does not suppress UI for the legacy login keychain.
+        let disableStatus = SecKeychainSetUserInteractionAllowed(false)
+        guard disableStatus == errSecSuccess else { throw ReadError.status(disableStatus) }
+      }
+      defer {
+        if !allowInteraction {
+          SecKeychainSetUserInteractionAllowed(previousInteractionAllowed.boolValue)
+        }
+      }
+      let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "\(servicePrefix).\(provider)",
+        kSecAttrAccount as String: provider,
+        kSecReturnData as String: true,
+        kSecMatchLimit as String: kSecMatchLimitOne,
+      ]
+      var result: AnyObject?
+      let status = lookup(query as CFDictionary, &result)
+      if status == errSecItemNotFound { return nil }
+      guard status == errSecSuccess else { throw ReadError.status(status) }
+      guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
+        throw ReadError.invalidData
+      }
+      return value
+    }
+  }
+
+  static func copyLegacyPassword(
+    _ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?
+  ) -> OSStatus {
+    let attributes = query as NSDictionary
+    guard let service = attributes[kSecAttrService] as? String,
+      let account = attributes[kSecAttrAccount] as? String else { return errSecParam }
+    let keychains = attributes[kSecMatchSearchList].map { $0 as CFTypeRef }
+    var item: SecKeychainItem?
+    let findStatus = SecKeychainFindGenericPassword(
+      keychains, UInt32(service.utf8.count), service,
+      UInt32(account.utf8.count), account, nil, nil, &item)
+    guard findStatus == errSecSuccess else { return findStatus }
+    guard let item else { return errSecInvalidItemRef }
+    var allowed: DarwinBoolean = true
+    let interactionStatus = SecKeychainGetUserInteractionAllowed(&allowed)
+    guard interactionStatus == errSecSuccess else { return interactionStatus }
+    if !allowed.boolValue {
+      var keychain: SecKeychain?
+      let copyStatus = SecKeychainItemCopyKeychain(item, &keychain)
+      guard copyStatus == errSecSuccess else { return copyStatus }
+      var state: SecKeychainStatus = 0
+      let stateStatus = SecKeychainGetStatus(keychain, &state)
+      guard stateStatus == errSecSuccess else { return stateStatus }
+      // A cached legacy keychain can still try to unlock despite the global UI policy.
+      guard state & SecKeychainStatus(kSecUnlockStateStatus) != 0 else {
+        return errSecInteractionNotAllowed
+      }
+    }
+    var length: UInt32 = 0
+    var bytes: UnsafeMutableRawPointer?
+    let status = SecKeychainItemCopyContent(item, nil, nil, &length, &bytes)
+    guard status == errSecSuccess else { return status }
+    defer { SecKeychainItemFreeContent(nil, bytes) }
+    result?.pointee = (bytes.map { Data(bytes: $0, count: Int(length)) } ?? Data()) as CFData
+    return errSecSuccess
   }
 
   /// Deletes an API key from the keychain

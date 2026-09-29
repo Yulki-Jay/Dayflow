@@ -204,6 +204,13 @@ struct SettingsView: View {
         .font(.custom("Figtree", size: 11))
         .foregroundColor(SettingsStyle.meta)
 
+      #if DEBUG
+        Text(UpdaterManager.localBuildNotice)
+          .font(.custom("Figtree", size: 10))
+          .foregroundColor(SettingsStyle.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      #endif
+
       Button {
         NotificationCenter.default.post(name: .showWhatsNew, object: nil)
       } label: {

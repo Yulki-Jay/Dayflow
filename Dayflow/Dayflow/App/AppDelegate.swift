@@ -44,6 +44,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidFinishLaunching(_ note: Notification) {
+    // The unit-test host must not request privacy permissions or start background jobs.
+    if NSClassFromString("XCTestCase") != nil { return }
     // Block termination by default; only specific flows enable it.
     AppDelegate.allowTermination = false
     applySavedDockIconPreference()

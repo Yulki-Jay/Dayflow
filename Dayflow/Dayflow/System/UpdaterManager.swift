@@ -5,6 +5,7 @@
 //  Thin wrapper around Sparkle to expose simple update actions/state to SwiftUI.
 //
 
+import AppKit
 import Foundation
 import OSLog
 import Sparkle
@@ -38,9 +39,16 @@ final class UpdaterManager: NSObject, ObservableObject {
 
   private let logger = Logger(subsystem: "com.dayflow.app", category: "sparkle")
 
+  #if DEBUG
+    static let localBuildNotice = String(localized: "Local build: update using scripts/build_debug.sh. Official updates are disabled to preserve signing and permissions.")
+  #endif
+
   private override init() {
     super.init()
 
+    #if DEBUG
+      statusText = Self.localBuildNotice
+    #else
     // Print what Sparkle thinks the settings are *before* starting:
     print("[Sparkle] bundleId=\(Bundle.main.bundleIdentifier ?? "nil")")
     print(
@@ -60,9 +68,19 @@ final class UpdaterManager: NSObject, ObservableObject {
     } catch {
       print("[Sparkle] updater.start() FAILED: \(error)")
     }
+    #endif
   }
 
   func checkForUpdates(showUI: Bool = false) {
+    #if DEBUG
+      statusText = Self.localBuildNotice
+      if showUI {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Local build")
+        alert.informativeText = statusText
+        alert.runModal()
+      }
+    #else
     isChecking = true
     statusText = "Checking…"
     track(
@@ -78,6 +96,7 @@ final class UpdaterManager: NSObject, ObservableObject {
       // Trigger a background check immediately; the scheduler will also keep running
       updater.checkForUpdatesInBackground()
     }
+    #endif
   }
 }
 

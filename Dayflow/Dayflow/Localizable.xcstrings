@@ -1,6 +1,102 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Keychain access is locked or requires approval. Use Unlock saved password in WebDAV settings.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "钥匙串已锁定或需要授权。请在 WebDAV 设置中点击“解锁已保存的密码”。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "鑰匙圈已鎖定或需要授權。請在 WebDAV 設定中點選「解鎖已儲存的密碼」。" } }
+      }
+    },
+    "Keychain access was cancelled.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已取消钥匙串访问。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "已取消鑰匙圈存取。" } }
+      }
+    },
+    "The saved password could not be decoded. Enter it again in WebDAV settings.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法读取已保存的密码，请在 WebDAV 设置中重新输入。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法讀取已儲存的密碼，請在 WebDAV 設定中重新輸入。" } }
+      }
+    },
+    "Unlock saved password": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "解锁已保存的密码" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "解鎖已儲存的密碼" } }
+      }
+    },
+    "The WebDAV server redirected the request. Enter the final WebDAV URL, including its trailing slash, and try again.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "WebDAV 服务器重定向了请求。请填写最终的 WebDAV 地址（包括结尾的斜杠），然后重试。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "WebDAV 伺服器重新導向了請求。請填寫最終的 WebDAV 位址（包括結尾的斜線），然後重試。" } }
+      }
+    },
+    "Timeline updated, but media sync did not complete. Retry to finish syncing media. %@": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "时间线已更新，但媒体尚未同步完成。请重试以继续同步媒体。%@" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "時間軸已更新，但媒體尚未同步完成。請重試以繼續同步媒體。%@" } }
+      }
+    },
+    "Sync cancelled.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "同步已取消。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "同步已取消。" } }
+      }
+    },
+    "Preparing remote folders…": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在准备远端文件夹…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在準備遠端資料夾…" } }
+      }
+    },
+    "Preserving the previous media index…": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在保留已有媒体索引…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在保留既有媒體索引…" } }
+      }
+    },
+    "Updating timeline…": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在更新时间线…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在更新時間軸…" } }
+      }
+    },
+    "Publishing media index…": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在发布媒体索引…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在發佈媒體索引…" } }
+      }
+    },
+    "Checking media file %lld…": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在检查第 %lld 个媒体文件…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在檢查第 %lld 個媒體檔案…" } }
+      }
+    },
+    "Preparing thumbnail %lld of %lld…": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在准备缩略图 %lld / %lld…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在準備縮圖 %lld / %lld…" } }
+      }
+    },
+    "Changes are saved with Save & test or Sync now. Disabling automatic sync or media uploads takes effect immediately for future syncs.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "点击“保存并测试”或“立即同步”保存修改。关闭自动同步或媒体上传后，后续同步立即按新设置执行。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "點選「儲存並測試」或「立即同步」儲存修改。關閉自動同步或媒體上傳後，後續同步立即按新設定執行。" } }
+      }
+    },
+    "Local build": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "本地构建版本" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "本機建置版本" } }
+      }
+    },
+    "Local build: update using scripts/build_debug.sh. Official updates are disabled to preserve signing and permissions.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "本地版本：请通过 scripts/build_debug.sh 更新。已停用官方更新，以保持签名与权限一致。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "本機版本：請透過 scripts/build_debug.sh 更新。已停用官方更新，以維持簽名與權限一致。" } }
+      }
+    },
     "WebDAV timeline sync": {
       "localizations": {
         "zh-Hans": {

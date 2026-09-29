@@ -57,7 +57,7 @@ extension WebDAVTimelineSyncService {
     }
     let directory = base.appendingPathComponent("media", isDirectory: true)
     let request = authenticatedRequest(url: directory, method: "MKCOL", configuration: configuration)
-    let (data, response) = try await session.data(for: request)
+    let (data, response) = try await send(request)
     if (response as? HTTPURLResponse)?.statusCode != 405 {
       try validateResponse(response, data: data, method: "MKCOL", accepted: 200..<300)
     }
@@ -71,9 +71,8 @@ extension WebDAVTimelineSyncService {
     for screenshot in screenshots {
       try Task.checkCancellation()
       if paths[screenshot.filePath] == nil {
-        // A segment can have been removed by storage maintenance since the DB read.
-        guard FileManager.default.fileExists(atPath: screenshot.filePath) else { continue }
-        let bytes = try Data(contentsOf: screenshot.fileURL)
+        await reportPhase(String(localized: "Checking media file \(paths.count + 1)…"))
+        guard let bytes = try Self.readMediaFile(screenshot.fileURL) else { continue }
         let isVideo = screenshot.frameIndex != nil
         let asset = WebDAVMediaManifest.asset(data: bytes,
           extension: isVideo ? "mp4" : "jpg", mimeType: isVideo ? "video/mp4" : "image/jpeg")
@@ -88,8 +87,9 @@ extension WebDAVTimelineSyncService {
         assetID: assetID, frameIndex: screenshot.frameIndex))
     }
 
-    for activity in activities {
+    for (index, activity) in activities.enumerated() {
       try Task.checkCancellation()
+      await reportPhase(String(localized: "Preparing thumbnail \(index + 1) of \(activities.count)…"))
       guard let shot = screenshots.first(where: {
         $0.capturedDate >= activity.startAt && $0.capturedDate < activity.endAt
           && paths[$0.filePath] != nil
@@ -112,21 +112,29 @@ extension WebDAVTimelineSyncService {
       frames: frames, thumbnails: thumbnails)
   }
 
+  static func readMediaFile(_ url: URL) throws -> Data? {
+    do {
+      return try Data(contentsOf: url)
+    } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+      return nil
+    }
+  }
+
   func uploadAsset(_ asset: WebDAVMediaManifest.Asset, data: Data, base: URL,
     configuration: WebDAVConfiguration) async throws {
     let url = base.appendingPathComponent(asset.path)
     var head = authenticatedRequest(url: url, method: "HEAD", configuration: configuration)
     head.cachePolicy = .reloadIgnoringLocalCacheData
-    let (headData, response) = try await session.data(for: head)
+    let (headData, response) = try await send(head)
     guard let http = response as? HTTPURLResponse else { throw WebDAVTimelineSyncError.invalidResponse }
     if http.statusCode == 200, http.expectedContentLength == Int64(asset.byteCount) { return }
-    if http.statusCode != 404 && http.statusCode != 200 {
+    if ![404, 200, 405, 501].contains(http.statusCode) {
       try validateResponse(response, data: headData, method: "HEAD", accepted: 200..<300)
     }
     var put = authenticatedRequest(url: url, method: "PUT", configuration: configuration)
     put.timeoutInterval = 300
     put.setValue(asset.mimeType, forHTTPHeaderField: "Content-Type")
-    let (body, result) = try await session.upload(for: put, from: data)
+    let (body, result) = try await send(put, body: data)
     try validateResponse(result, data: body, method: "PUT", accepted: 200..<300)
   }
 }

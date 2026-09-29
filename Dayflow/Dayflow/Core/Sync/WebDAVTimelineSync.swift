@@ -20,6 +20,9 @@ struct WebDAVConfiguration: Sendable, Equatable {
       components.host != nil
     else { return nil }
 
+    if !components.percentEncodedPath.hasSuffix("/") {
+      components.percentEncodedPath += "/"
+    }
     components.user = nil
     components.password = nil
     components.query = nil
@@ -129,30 +132,39 @@ enum WebDAVTimelinePreferences {
     set { UserDefaults.standard.set(newValue, forKey: Key.lastSyncAt) }
   }
 
-  static func configuration(password: String? = nil) -> WebDAVConfiguration {
+  static func configuration(password: String) -> WebDAVConfiguration {
     WebDAVConfiguration(
       serverURL: serverURL,
       username: username,
-      password: password
-        ?? KeychainManager.shared.retrieve(for: WebDAVConfiguration.passwordKeychainKey) ?? "",
+      password: password,
       remotePath: remotePath,
       includeMedia: includeMedia,
       snapshotFilename: snapshotFilename
     )
   }
 
-  static func save(_ configuration: WebDAVConfiguration, automaticSync: Bool) throws {
-    serverURL = configuration.serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
-    username = configuration.username.trimmingCharacters(in: .whitespacesAndNewlines)
-    remotePath = configuration.normalizedRemotePathComponents.joined(separator: "/")
-    self.automaticSync = automaticSync
-    includeMedia = configuration.includeMedia
-
-    guard KeychainManager.shared.store(
-      configuration.password, for: WebDAVConfiguration.passwordKeychainKey)
-    else {
+  static func save(
+    _ configuration: WebDAVConfiguration, automaticSync: Bool,
+    defaults: UserDefaults = .standard,
+    storePassword: (String) -> Bool = {
+      if (try? KeychainManager.shared.readPassword(
+        for: WebDAVConfiguration.passwordKeychainKey, allowInteraction: false)) == $0 {
+        return true
+      }
+      return KeychainManager.shared.store($0, for: WebDAVConfiguration.passwordKeychainKey)
+    }
+  ) throws {
+    if let message = configuration.validationMessage {
+      throw WebDAVTimelineSyncError.invalidConfiguration(message)
+    }
+    guard storePassword(configuration.password) else {
       throw WebDAVTimelineSyncError.keychainWriteFailed
     }
+    defaults.set(configuration.serverURL.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Key.serverURL)
+    defaults.set(configuration.username.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Key.username)
+    defaults.set(configuration.normalizedRemotePathComponents.joined(separator: "/"), forKey: "webDAVSyncDirectory")
+    defaults.set(automaticSync, forKey: Key.automaticSync)
+    defaults.set(configuration.includeMedia, forKey: "webDAVIncludeMedia")
   }
 }
 
@@ -299,6 +311,8 @@ enum WebDAVTimelineSyncError: LocalizedError, Equatable {
   case keychainWriteFailed
   case invalidResponse
   case alreadySyncing
+  case redirected
+  case mediaIncomplete(String)
   case requestFailed(method: String, statusCode: Int, message: String?)
 
   var errorDescription: String? {
@@ -310,6 +324,10 @@ enum WebDAVTimelineSyncError: LocalizedError, Equatable {
       return String(localized: "The WebDAV server returned an invalid response.")
     case .alreadySyncing:
       return String(localized: "A WebDAV sync is already running. Please try again when it finishes.")
+    case .redirected:
+      return String(localized: "The WebDAV server redirected the request. Enter the final WebDAV URL, including its trailing slash, and try again.")
+    case .mediaIncomplete(let detail):
+      return String(localized: "Timeline updated, but media sync did not complete. Retry to finish syncing media. \(detail)")
     case .requestFailed(let method, let statusCode, let message):
       let detail = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       return detail.isEmpty
@@ -319,14 +337,115 @@ enum WebDAVTimelineSyncError: LocalizedError, Equatable {
   }
 }
 
+@MainActor
+final class WebDAVSyncStatus: ObservableObject {
+  static let shared = WebDAVSyncStatus()
+  @Published var isSyncing = false
+  @Published var phase: String?
+  @Published var errorMessage: String?
+  @Published var lastSyncAt = WebDAVTimelinePreferences.lastSyncAt
+}
+
+final class WebDAVRedirectPolicy: NSObject, URLSessionTaskDelegate, Sendable {
+  func urlSession(_ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    // WebDAV writes must never become GETs or forward credentials to another origin.
+    completionHandler(nil)
+  }
+}
+
 actor WebDAVTimelineSyncService {
   static let shared = WebDAVTimelineSyncService()
 
   let session: URLSession
-  private var isSyncing = false
+  private let redirectPolicy = WebDAVRedirectPolicy()
+  private let snapshotProvider: @Sendable () throws -> WebDAVTimelineSnapshot
+  private let mediaProvider: (@Sendable (WebDAVConfiguration, [WebDAVTimelineSnapshot.Activity]) async throws -> WebDAVMediaManifest)?
+  private let retrySleep: @Sendable (TimeInterval) async throws -> Void
+  private var activeSync: Task<Int, Error>?
+  private let reportsStatus: Bool
 
-  init(session: URLSession = .shared) {
+  static func makeSession() -> URLSession {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.urlCredentialStorage = nil
+    configuration.httpShouldSetCookies = false
+    configuration.timeoutIntervalForResource = 300
+    return URLSession(configuration: configuration)
+  }
+
+  init(session: URLSession = WebDAVTimelineSyncService.makeSession(), reportsStatus: Bool = true,
+    snapshotProvider: @escaping @Sendable () throws -> WebDAVTimelineSnapshot = {
+      try StorageManager.shared.makeWebDAVTimelineSnapshot()
+    },
+    mediaProvider: (@Sendable (WebDAVConfiguration, [WebDAVTimelineSnapshot.Activity]) async throws -> WebDAVMediaManifest)? = nil,
+    retrySleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
+      try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
+    }
+  ) {
     self.session = session
+    self.reportsStatus = reportsStatus
+    self.snapshotProvider = snapshotProvider
+    self.mediaProvider = mediaProvider
+    self.retrySleep = retrySleep
+  }
+
+  func cancelSync() {
+    activeSync?.cancel()
+  }
+
+  func reportPhase(_ phase: String) async {
+    guard reportsStatus else { return }
+    await MainActor.run { WebDAVSyncStatus.shared.phase = phase }
+  }
+
+  func send(_ request: URLRequest, body: Data? = nil) async throws -> (Data, URLResponse) {
+    for attempt in 0..<3 {
+      try Task.checkCancellation()
+      do {
+        let result: (Data, URLResponse)
+        if let body {
+          result = try await session.upload(for: request, from: body, delegate: redirectPolicy)
+        } else {
+          result = try await session.data(for: request, delegate: redirectPolicy)
+        }
+        try Task.checkCancellation()
+        guard let response = result.1 as? HTTPURLResponse else {
+          throw WebDAVTimelineSyncError.invalidResponse
+        }
+        if (300..<400).contains(response.statusCode) {
+          throw WebDAVTimelineSyncError.redirected
+        }
+        if [408, 429, 500, 502, 503, 504].contains(response.statusCode), attempt < 2 {
+          let delay = Self.retryDelay(response: response, attempt: attempt)
+          if let delay {
+            try await retrySleep(delay)
+            continue
+          }
+        }
+        return result
+      } catch let error as URLError where attempt < 2 && [
+        .timedOut, .networkConnectionLost, .cannotConnectToHost, .dnsLookupFailed
+      ].contains(error.code) {
+        try await retrySleep(pow(2, Double(attempt)))
+      }
+    }
+    throw WebDAVTimelineSyncError.invalidResponse
+  }
+
+  static func retryDelay(response: HTTPURLResponse, attempt: Int, now: Date = Date()) -> TimeInterval? {
+    guard let value = response.value(forHTTPHeaderField: "Retry-After") else {
+      return pow(2, Double(attempt))
+    }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
+    let delay = TimeInterval(value) ?? formatter.date(from: value)?.timeIntervalSince(now)
+    guard let delay else { return pow(2, Double(attempt)) }
+    guard delay <= 30 else { return nil }
+    return max(0, delay)
   }
 
   func testConnection(configuration: WebDAVConfiguration) async throws {
@@ -334,22 +453,77 @@ actor WebDAVTimelineSyncService {
     guard let url = configuration.normalizedServerURL else { return }
     var request = authenticatedRequest(url: url, method: "PROPFIND", configuration: configuration)
     request.setValue("0", forHTTPHeaderField: "Depth")
-    let (data, response) = try await session.data(for: request)
+    let (data, response) = try await send(request)
     try validateResponse(response, data: data, method: "PROPFIND", accepted: 200..<300)
+  }
+
+  func testAndSave(
+    configuration: WebDAVConfiguration, automaticSync: Bool,
+    save: @Sendable (WebDAVConfiguration, Bool) throws -> Void = {
+      try WebDAVTimelinePreferences.save($0, automaticSync: $1)
+    }
+  ) async throws {
+    try await testConnection(configuration: configuration)
+    try Task.checkCancellation()
+    try save(configuration, automaticSync)
   }
 
   @discardableResult
   func sync(configuration: WebDAVConfiguration) async throws -> Int {
     try validate(configuration)
-    guard !isSyncing else { throw WebDAVTimelineSyncError.alreadySyncing }
-    isSyncing = true
-    defer { isSyncing = false }
+    guard activeSync == nil else { throw WebDAVTimelineSyncError.alreadySyncing }
+    try Task.checkCancellation()
+    let task = Task { try await self.performSync(configuration: configuration) }
+    activeSync = task
+    defer { activeSync = nil }
+    do {
+      let count = try await withTaskCancellationHandler {
+        try await task.value
+      } onCancel: {
+        task.cancel()
+      }
+      if reportsStatus {
+        await MainActor.run {
+          WebDAVSyncStatus.shared.phase = String(localized: "Synced \(count) timeline activities.")
+          WebDAVSyncStatus.shared.lastSyncAt = WebDAVTimelinePreferences.lastSyncAt
+          WebDAVSyncStatus.shared.isSyncing = false
+        }
+      }
+      return count
+    } catch {
+      if reportsStatus {
+        await MainActor.run {
+          WebDAVSyncStatus.shared.phase = nil
+          WebDAVSyncStatus.shared.errorMessage = Self.message(for: error)
+          WebDAVSyncStatus.shared.isSyncing = false
+        }
+      }
+      throw error
+    }
+  }
 
+  static func message(for error: Error) -> String {
+    if error is CancellationError || (error as? URLError)?.code == .cancelled {
+      return String(localized: "Sync cancelled.")
+    }
+    return error.localizedDescription
+  }
+
+  private func performSync(configuration: WebDAVConfiguration) async throws -> Int {
+    if reportsStatus {
+      await MainActor.run {
+        WebDAVSyncStatus.shared.isSyncing = true
+        WebDAVSyncStatus.shared.phase = nil
+        WebDAVSyncStatus.shared.errorMessage = nil
+      }
+    }
+    try Task.checkCancellation()
+    await reportPhase(String(localized: "Preparing remote folders…"))
     for directoryURL in configuration.remoteDirectoryURLs {
       var request = authenticatedRequest(
         url: directoryURL, method: "MKCOL", configuration: configuration)
       request.setValue("0", forHTTPHeaderField: "Content-Length")
-      let (data, response) = try await session.data(for: request)
+      let (data, response) = try await send(request)
       guard let http = response as? HTTPURLResponse else {
         throw WebDAVTimelineSyncError.invalidResponse
       }
@@ -358,10 +532,42 @@ actor WebDAVTimelineSyncService {
       }
     }
 
-    var snapshot = try StorageManager.shared.makeWebDAVTimelineSnapshot()
+    var snapshot = try snapshotProvider()
+    await reportPhase(String(localized: "Preserving the previous media index…"))
+    snapshot.media = try await previousMedia(configuration: configuration)
+    await reportPhase(String(localized: "Updating timeline…"))
+    try await publish(snapshot, configuration: configuration)
     if configuration.includeMedia {
-      snapshot.media = try await uploadMedia(configuration: configuration, activities: snapshot.activities)
+      do {
+        if let mediaProvider {
+          snapshot.media = try await mediaProvider(configuration, snapshot.activities)
+        } else {
+          snapshot.media = try await uploadMedia(configuration: configuration, activities: snapshot.activities)
+        }
+        await reportPhase(String(localized: "Publishing media index…"))
+        try await publish(snapshot, configuration: configuration)
+      } catch {
+        throw WebDAVTimelineSyncError.mediaIncomplete(Self.message(for: error))
+      }
     }
+    if reportsStatus { WebDAVTimelinePreferences.lastSyncAt = Date() }
+    return snapshot.activities.count
+  }
+
+  private func previousMedia(configuration: WebDAVConfiguration) async throws -> WebDAVMediaManifest? {
+    guard let url = configuration.remoteFileURL else { throw WebDAVTimelineSyncError.invalidResponse }
+    var request = authenticatedRequest(url: url, method: "GET", configuration: configuration)
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    let (data, response) = try await send(request)
+    if (response as? HTTPURLResponse)?.statusCode == 404 { return nil }
+    try validateResponse(response, data: data, method: "GET", accepted: 200..<300)
+    struct MediaIndex: Decodable { let media: WebDAVMediaManifest? }
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(MediaIndex.self, from: data).media
+  }
+
+  private func publish(_ snapshot: WebDAVTimelineSnapshot, configuration: WebDAVConfiguration) async throws {
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -373,20 +579,24 @@ actor WebDAVTimelineSyncService {
     var request = authenticatedRequest(
       url: remoteURL, method: "PUT", configuration: configuration)
     request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-    let (responseData, response) = try await session.upload(for: request, from: body)
+    let (responseData, response) = try await send(request, body: body)
     try validateResponse(response, data: responseData, method: "PUT", accepted: 200..<300)
-    WebDAVTimelinePreferences.lastSyncAt = Date()
-    return snapshot.activities.count
   }
 
   func syncIfConfigured() async {
-    guard WebDAVTimelinePreferences.automaticSync else { return }
-    let configuration = WebDAVTimelinePreferences.configuration()
-    guard configuration.validationMessage == nil else { return }
+    guard WebDAVTimelinePreferences.automaticSync, activeSync == nil else { return }
     do {
+      let password = try KeychainManager.shared.readPassword(
+        for: WebDAVConfiguration.passwordKeychainKey, allowInteraction: false) ?? ""
+      let configuration = WebDAVTimelinePreferences.configuration(password: password)
       _ = try await sync(configuration: configuration)
     } catch {
-      print("⚠️ [WebDAV] Automatic timeline sync failed: \(error.localizedDescription)")
+      if reportsStatus {
+        await MainActor.run {
+          WebDAVSyncStatus.shared.phase = nil
+          WebDAVSyncStatus.shared.errorMessage = Self.message(for: error)
+        }
+      }
     }
   }
 
@@ -404,7 +614,7 @@ actor WebDAVTimelineSyncService {
     var request = URLRequest(url: url)
     request.httpMethod = method
     request.timeoutInterval = 60
-    let credentials = "\(configuration.username):\(configuration.password)"
+    let credentials = "\(configuration.username.trimmingCharacters(in: .whitespacesAndNewlines)):\(configuration.password)"
     let encoded = Data(credentials.utf8).base64EncodedString()
     request.setValue("Basic \(encoded)", forHTTPHeaderField: "Authorization")
     request.setValue("Dayflow WebDAV Sync", forHTTPHeaderField: "User-Agent")
@@ -463,27 +673,33 @@ final class WebDAVSettingsViewModel: ObservableObject {
   @Published private(set) var statusMessage: String?
   @Published private(set) var errorMessage: String?
   @Published private(set) var lastSyncAt: Date?
+  private var operationTask: Task<Void, Never>?
 
   init() {
     serverURL = WebDAVTimelinePreferences.serverURL
     username = WebDAVTimelinePreferences.username
-    password =
-      KeychainManager.shared.retrieve(for: WebDAVConfiguration.passwordKeychainKey) ?? ""
+    password = ""
     remotePath = WebDAVTimelinePreferences.remotePath
     automaticSync = WebDAVTimelinePreferences.automaticSync
     includeMedia = WebDAVTimelinePreferences.includeMedia
     lastSyncAt = WebDAVTimelinePreferences.lastSyncAt
+    do {
+      password = try KeychainManager.shared.readPassword(
+        for: WebDAVConfiguration.passwordKeychainKey, allowInteraction: false) ?? ""
+    } catch {
+      errorMessage = error.localizedDescription
+    }
   }
 
   var canSubmit: Bool {
-    !isWorking && configuration.validationMessage == nil
+    !isWorking && !WebDAVSyncStatus.shared.isSyncing && configuration.validationMessage == nil
   }
 
   func saveAndTest() {
     perform(actionName: String(localized: "Connection successful. Settings saved.")) {
       let configuration = self.configuration
-      try WebDAVTimelinePreferences.save(configuration, automaticSync: self.automaticSync)
-      try await WebDAVTimelineSyncService.shared.testConnection(configuration: configuration)
+      try await WebDAVTimelineSyncService.shared.testAndSave(
+        configuration: configuration, automaticSync: self.automaticSync)
       return nil
     }
   }
@@ -491,20 +707,44 @@ final class WebDAVSettingsViewModel: ObservableObject {
   func syncNow() {
     perform(actionName: nil) {
       let configuration = self.configuration
-      try WebDAVTimelinePreferences.save(configuration, automaticSync: self.automaticSync)
+      try await WebDAVTimelineSyncService.shared.testAndSave(
+        configuration: configuration, automaticSync: self.automaticSync)
       let count = try await WebDAVTimelineSyncService.shared.sync(configuration: configuration)
       return String(localized: "Synced \(count) timeline activities.")
     }
   }
 
   func persistAutomaticSync() {
-    guard configuration.validationMessage == nil else { return }
-    do {
-      try WebDAVTimelinePreferences.save(configuration, automaticSync: automaticSync)
-      errorMessage = nil
-    } catch {
-      errorMessage = error.localizedDescription
+    if !automaticSync { WebDAVTimelinePreferences.automaticSync = false }
+    if !includeMedia { WebDAVTimelinePreferences.includeMedia = false }
+  }
+
+  func unlockPassword() {
+    guard !isWorking, !WebDAVSyncStatus.shared.isSyncing else { return }
+    isWorking = true
+    errorMessage = nil
+    statusMessage = nil
+    WebDAVSyncStatus.shared.errorMessage = nil
+    WebDAVSyncStatus.shared.phase = nil
+    operationTask = Task {
+      defer { isWorking = false; operationTask = nil }
+      do {
+        let saved = try await Task.detached {
+          try KeychainManager.shared.readPassword(
+            for: WebDAVConfiguration.passwordKeychainKey, allowInteraction: true)
+        }.value
+        try Task.checkCancellation()
+        password = saved ?? ""
+        errorMessage = password.isEmpty ? String(localized: "Enter your WebDAV password.") : nil
+      } catch {
+        errorMessage = WebDAVTimelineSyncService.message(for: error)
+      }
     }
+  }
+
+  func cancel() {
+    operationTask?.cancel()
+    Task { await WebDAVTimelineSyncService.shared.cancelSync() }
   }
 
   private var configuration: WebDAVConfiguration {
@@ -522,7 +762,7 @@ final class WebDAVSettingsViewModel: ObservableObject {
     actionName: String?,
     operation: @escaping () async throws -> String?
   ) {
-    guard !isWorking else { return }
+    guard !isWorking, !WebDAVSyncStatus.shared.isSyncing else { return }
     if let validationMessage = configuration.validationMessage {
       errorMessage = validationMessage
       statusMessage = nil
@@ -533,15 +773,18 @@ final class WebDAVSettingsViewModel: ObservableObject {
     errorMessage = nil
     statusMessage = nil
 
-    Task {
+    WebDAVSyncStatus.shared.errorMessage = nil
+    WebDAVSyncStatus.shared.phase = nil
+    operationTask = Task {
       do {
         let resultMessage = try await operation()
         statusMessage = resultMessage ?? actionName
         lastSyncAt = WebDAVTimelinePreferences.lastSyncAt
       } catch {
-        errorMessage = error.localizedDescription
+        errorMessage = WebDAVTimelineSyncService.message(for: error)
       }
       isWorking = false
+      operationTask = nil
     }
   }
 }

@@ -738,7 +738,9 @@ final class DayflowAuthManager: ObservableObject {
     ]
 
     var item: AnyObject?
-    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    let status = KeychainManager.shared.withAccess {
+      SecItemCopyMatching(query as CFDictionary, &item)
+    }
     guard status == errSecSuccess else {
       logSessionTokenReadFailure(status: status)
       return nil
@@ -921,7 +923,9 @@ final class DayflowAuthManager: ObservableObject {
       kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
       kSecValueData as String: data,
     ]
-    return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    return KeychainManager.shared.withAccess {
+      SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    }
   }
 
   private func retrieveSessionToken() -> String? {
@@ -934,7 +938,9 @@ final class DayflowAuthManager: ObservableObject {
       kSecAttrService as String: Self.sessionService,
       kSecAttrAccount as String: Self.sessionAccount,
     ]
-    SecItemDelete(query as CFDictionary)
+    _ = KeychainManager.shared.withAccess {
+      SecItemDelete(query as CFDictionary)
+    }
   }
 }
 
