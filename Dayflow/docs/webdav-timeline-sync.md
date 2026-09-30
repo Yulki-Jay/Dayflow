@@ -2,7 +2,21 @@
 
 Dayflow can publish a read-only, web-friendly snapshot of timeline data to WebDAV. Configure it under **Settings → Export → WebDAV timeline sync**.
 
-Enter a **Remote sync folder**, relative to the WebDAV server URL (default: `Dayflow`). Dayflow manages `timeline.json` and `media/` within that folder. An empty folder or `/` uses the server URL's root. Missing folders are created with `MKCOL`, then the snapshot is replaced with `PUT`. Existing JSON-path settings automatically migrate to their parent directory and preserve the original filename so existing readers keep working. The password is stored in macOS Keychain; it is never written to preferences or the JSON file.
+Enter a **Remote sync folder**, relative to the WebDAV server URL (default: `Dayflow`). Each date gets an independent directory:
+
+```text
+Dayflow/
+  2026-09-29/
+    timeline.json
+    media/
+  2026-09-30/
+    timeline.json
+    media/
+```
+
+Dates follow Dayflow's local **4 AM day boundary**. Activities and standups keep their stored day; frames use the snapshot's source time zone. Days containing only standups or finalized recordings are included. Cross-boundary video segments are copied into both date directories, with each manifest listing only that day's frames and preserving their original frame offsets. Existing custom snapshot filenames are retained inside each date directory. The old combined root snapshot is no longer written or migrated; existing remote files are never automatically deleted.
+
+An empty remote folder or `/` uses the server URL's root. Missing folders are created with `MKCOL`; snapshots are replaced with `PUT`. The password is stored in macOS Keychain, never in preferences or JSON.
 
 ## Intended use
 
@@ -20,7 +34,7 @@ By default it excludes media. Enable **Sync screenshots and videos** to include 
 
 ## Media contract (optional, additive to schemaVersion 1)
 
-`media.version` is 1. When media sync is disabled, the `media` property is absent. Existing text-only readers can ignore this property.
+`media.version` is 1. A date without uploaded media has no `media` property. Disabling media uploads preserves any existing remote manifest. Text-only readers can ignore this property.
 
 - `media.assets`: `{ id, path, mimeType, byteCount }`. `id` is SHA-256 of the exact file bytes. `path` is relative to the timeline JSON URL, e.g. `media/<sha256>.mp4` or `.jpg`.
 - `media.frames`: `{ id, capturedAt, assetID, frameIndex? }`. `capturedAt` is ISO 8601 wall-clock time. In HEVC segments, frame N has presentation time N seconds; this is not wall-clock playback speed. A missing `frameIndex` identifies a standalone JPEG.
@@ -28,9 +42,11 @@ By default it excludes media. Enable **Sync screenshots and videos** to include 
 
 To display an activity, find its thumbnail and resolve the asset path against the JSON URL. To inspect captures, select frames within `[activity.startAt, activity.endAt)`, load their assets on demand, and seek to `frameIndex` seconds. Cache immutable assets by hash. HEVC playback depends on browser/OS support; use native decoding or an authenticated server-side H.264/JPEG conversion for unsupported clients. JPEG thumbnails work independently of HEVC support.
 
-Media files upload before the timeline JSON. Each sync checks remote files with HEAD and skips successful responses with matching Content-Length; missing or wrong-sized files are PUT again. A failed run leaves the last published index unchanged until the final JSON PUT; retrying skips completed assets. There is no byte-range resume or automatic retry loop: an interrupted individual file is uploaded again. The server must support HEAD, MKCOL, and PUT. No credentials or local absolute file paths are exported.
+Each sync first updates all daily timeline files, newest first, while preserving each day's previous media manifest. It then uploads media per day and publishes the completed manifest. A media failure does not block other dates' timeline updates. Errors name the affected date; cancellation stops further requests and does not report full success. Authentication failures stop the run rather than repeatedly trying every date.
 
-The initial sync uploads all retained local captures. Subsequent runs still check their metadata, but transfer only missing media. Open segments are deferred until finalized (normally within ten minutes). This is a view of currently retained local media, not a complete restorable backup: local purging removes frames from future indexes. Uploaded files are never automatically deleted from WebDAV, including when media sync is turned off; remote retention/cleanup is manual in this version. Do not sync multiple recording Macs to the same JSON path, as the last writer replaces the snapshot.
+Remote `HEAD` responses with matching Content-Length skip an upload; missing or wrong-sized files are uploaded again. Servers without `HEAD` support fall back to `PUT`. Transient failures receive bounded retries; authentication errors and unsafe redirects do not. There is no byte-range resume. Servers must support `PROPFIND`, `GET`, `MKCOL`, and `PUT`. No credentials or local absolute file paths are exported.
+
+The initial sync uploads all retained local captures into their daily folders. Open segments are deferred until finalized (normally within ten minutes). Previously indexed remote media is retained even after local retention removes its source, but recordings deleted locally before their first upload cannot be recovered. This is not a complete restorable application backup. Remote cleanup is manual; use a separate sync folder for each recording Mac to avoid overwriting another device's days.
 
 Screen content is not end-to-end encrypted; use HTTPS and a private WebDAV account. The application does not enable media upload automatically for existing text-only users. There is no bidirectional editing or mobile/web client bundled in this change.
 
@@ -99,4 +115,4 @@ const snapshot = await response.json();
 if (snapshot.schemaVersion !== 1) throw new Error("Unsupported Dayflow schema");
 ```
 
-To render a weekly calendar, group `activities` by local date in `source.timeZone`, place each card using `startAt` and `endAt`, and map `activity.category` to the matching category's `colorHex`.
+To render a weekly calendar, fetch each day's JSON from its date directory, keep activities grouped by their stored `day` (not midnight calendar dates), place each card using `startAt` and `endAt`, and map `activity.category` to the matching category's `colorHex`. Resolve each media path relative to its own daily JSON URL.

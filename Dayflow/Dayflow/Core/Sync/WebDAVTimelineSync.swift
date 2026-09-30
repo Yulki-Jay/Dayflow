@@ -54,6 +54,12 @@ struct WebDAVConfiguration: Sendable, Equatable {
     }
   }
 
+  func forDay(_ day: String) -> WebDAVConfiguration {
+    var daily = self
+    daily.remotePath = (normalizedRemotePathComponents + [day]).joined(separator: "/")
+    return daily
+  }
+
   var validationMessage: String? {
     guard normalizedServerURL != nil else {
       return String(localized: "Enter a valid HTTP or HTTPS WebDAV URL.")
@@ -217,6 +223,53 @@ struct WebDAVTimelineSnapshot: Codable, Sendable, Equatable {
   var media: WebDAVMediaManifest? = nil
 }
 
+struct WebDAVDailyBackup: Sendable {
+  let day: String
+  var snapshot: WebDAVTimelineSnapshot
+  let screenshots: [Screenshot]
+
+  static func group(
+    snapshot: WebDAVTimelineSnapshot, screenshots: [Screenshot]
+  ) throws -> [WebDAVDailyBackup] {
+    guard let timeZone = TimeZone(identifier: snapshot.source.timeZone) else {
+      throw WebDAVTimelineSyncError.invalidResponse
+    }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let activities = Dictionary(grouping: snapshot.activities, by: \.day)
+    let standups = Dictionary(grouping: snapshot.standups, by: \.day)
+    var frames: [String: [Screenshot]] = [:]
+    var cachedDay: (dayString: String, startOfDay: Date, endOfDay: Date)?
+    for screenshot in screenshots.sorted(by: { $0.capturedAt < $1.capturedAt })
+      where !screenshot.isDeleted && screenshot.fileSize != nil {
+      let date = screenshot.capturedDate
+      if cachedDay == nil || date < cachedDay!.startOfDay || date >= cachedDay!.endOfDay {
+        cachedDay = date.getDayInfoFor4AMBoundary(calendar: calendar)
+      }
+      frames[cachedDay!.dayString, default: []].append(screenshot)
+    }
+    let days = Set(activities.keys).union(standups.keys).union(frames.keys)
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = calendar
+    formatter.timeZone = timeZone
+    formatter.dateFormat = "yyyy-MM-dd"
+    formatter.isLenient = false
+    return try days.sorted(by: >).map { day in
+      guard day.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"#, options: .regularExpression) != nil,
+        let date = formatter.date(from: day), formatter.string(from: date) == day else {
+        throw WebDAVTimelineSyncError.invalidBackupDay
+      }
+      return WebDAVDailyBackup(day: day,
+        snapshot: WebDAVTimelineSnapshot(
+          schemaVersion: snapshot.schemaVersion, generatedAt: snapshot.generatedAt,
+          source: snapshot.source, categories: snapshot.categories,
+          activities: activities[day] ?? [], standups: standups[day] ?? []),
+        screenshots: frames[day] ?? [])
+    }
+  }
+}
+
 extension StorageManager {
   func makeWebDAVTimelineSnapshot(generatedAt: Date = Date()) throws -> WebDAVTimelineSnapshot {
     let decoder = JSONDecoder()
@@ -313,6 +366,8 @@ enum WebDAVTimelineSyncError: LocalizedError, Equatable {
   case alreadySyncing
   case redirected
   case mediaIncomplete(String)
+  case invalidBackupDay
+  case dailyBackupsIncomplete(String)
   case requestFailed(method: String, statusCode: Int, message: String?)
 
   var errorDescription: String? {
@@ -328,6 +383,10 @@ enum WebDAVTimelineSyncError: LocalizedError, Equatable {
       return String(localized: "The WebDAV server redirected the request. Enter the final WebDAV URL, including its trailing slash, and try again.")
     case .mediaIncomplete(let detail):
       return String(localized: "Timeline updated, but media sync did not complete. Retry to finish syncing media. \(detail)")
+    case .invalidBackupDay:
+      return String(localized: "A backup contains an invalid date. No daily backup was uploaded.")
+    case .dailyBackupsIncomplete(let detail):
+      return String(localized: "Some daily backups did not complete. Retry to finish syncing. \(detail)")
     case .requestFailed(let method, let statusCode, let message):
       let detail = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
       return detail.isEmpty
@@ -362,7 +421,9 @@ actor WebDAVTimelineSyncService {
   let session: URLSession
   private let redirectPolicy = WebDAVRedirectPolicy()
   private let snapshotProvider: @Sendable () throws -> WebDAVTimelineSnapshot
-  private let mediaProvider: (@Sendable (WebDAVConfiguration, [WebDAVTimelineSnapshot.Activity]) async throws -> WebDAVMediaManifest)?
+  private let screenshotsProvider: @Sendable () throws -> [Screenshot]
+  private let mediaProvider: (@Sendable (WebDAVConfiguration, [WebDAVTimelineSnapshot.Activity], [Screenshot]) async throws -> WebDAVMediaManifest)?
+  private var currentBackupDay: String?
   private let retrySleep: @Sendable (TimeInterval) async throws -> Void
   private var activeSync: Task<Int, Error>?
   private let reportsStatus: Bool
@@ -379,7 +440,10 @@ actor WebDAVTimelineSyncService {
     snapshotProvider: @escaping @Sendable () throws -> WebDAVTimelineSnapshot = {
       try StorageManager.shared.makeWebDAVTimelineSnapshot()
     },
-    mediaProvider: (@Sendable (WebDAVConfiguration, [WebDAVTimelineSnapshot.Activity]) async throws -> WebDAVMediaManifest)? = nil,
+    screenshotsProvider: @escaping @Sendable () throws -> [Screenshot] = {
+      try StorageManager.shared.webDAVScreenshots()
+    },
+    mediaProvider: (@Sendable (WebDAVConfiguration, [WebDAVTimelineSnapshot.Activity], [Screenshot]) async throws -> WebDAVMediaManifest)? = nil,
     retrySleep: @escaping @Sendable (TimeInterval) async throws -> Void = {
       try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
     }
@@ -387,6 +451,7 @@ actor WebDAVTimelineSyncService {
     self.session = session
     self.reportsStatus = reportsStatus
     self.snapshotProvider = snapshotProvider
+    self.screenshotsProvider = screenshotsProvider
     self.mediaProvider = mediaProvider
     self.retrySleep = retrySleep
   }
@@ -397,7 +462,8 @@ actor WebDAVTimelineSyncService {
 
   func reportPhase(_ phase: String) async {
     guard reportsStatus else { return }
-    await MainActor.run { WebDAVSyncStatus.shared.phase = phase }
+    let message = currentBackupDay.map { "\($0) · \(phase)" } ?? phase
+    await MainActor.run { WebDAVSyncStatus.shared.phase = message }
   }
 
   func send(_ request: URLRequest, body: Data? = nil) async throws -> (Data, URLResponse) {
@@ -518,40 +584,95 @@ actor WebDAVTimelineSyncService {
       }
     }
     try Task.checkCancellation()
+    defer { currentBackupDay = nil }
+    let snapshot = try snapshotProvider()
+    let screenshots = configuration.includeMedia ? try screenshotsProvider() : []
+    let backups = try WebDAVDailyBackup.group(snapshot: snapshot, screenshots: screenshots)
     await reportPhase(String(localized: "Preparing remote folders…"))
     for directoryURL in configuration.remoteDirectoryURLs {
-      var request = authenticatedRequest(
-        url: directoryURL, method: "MKCOL", configuration: configuration)
-      request.setValue("0", forHTTPHeaderField: "Content-Length")
-      let (data, response) = try await send(request)
-      guard let http = response as? HTTPURLResponse else {
-        throw WebDAVTimelineSyncError.invalidResponse
-      }
-      guard (200..<300).contains(http.statusCode) || http.statusCode == 405 else {
-        throw requestError(method: "MKCOL", response: http, data: data)
-      }
+      try await createDirectory(directoryURL, configuration: configuration)
     }
 
-    var snapshot = try snapshotProvider()
-    await reportPhase(String(localized: "Preserving the previous media index…"))
-    snapshot.media = try await previousMedia(configuration: configuration)
-    await reportPhase(String(localized: "Updating timeline…"))
-    try await publish(snapshot, configuration: configuration)
-    if configuration.includeMedia {
+    var ready: [WebDAVDailyBackup] = []
+    var failures: [String] = []
+    for var backup in backups {
+      try Task.checkCancellation()
+      currentBackupDay = backup.day
+      let dailyConfiguration = configuration.forDay(backup.day)
       do {
-        if let mediaProvider {
-          snapshot.media = try await mediaProvider(configuration, snapshot.activities)
-        } else {
-          snapshot.media = try await uploadMedia(configuration: configuration, activities: snapshot.activities)
+        guard let directory = dailyConfiguration.remoteFileURL?.deletingLastPathComponent() else {
+          throw WebDAVTimelineSyncError.invalidResponse
         }
-        await reportPhase(String(localized: "Publishing media index…"))
-        try await publish(snapshot, configuration: configuration)
+        await reportPhase(String(localized: "Preparing remote folders…"))
+        try await createDirectory(directory, configuration: dailyConfiguration)
+        await reportPhase(String(localized: "Preserving the previous media index…"))
+        backup.snapshot.media = try await previousMedia(configuration: dailyConfiguration)
+        await reportPhase(String(localized: "Updating timeline…"))
+        try await publish(backup.snapshot, configuration: dailyConfiguration)
+        ready.append(backup)
       } catch {
-        throw WebDAVTimelineSyncError.mediaIncomplete(Self.message(for: error))
+        if mustStopSync(after: error) { throw error }
+        failures.append("\(backup.day): \(Self.message(for: error))")
       }
+    }
+    let timelinesComplete = failures.isEmpty
+
+    if configuration.includeMedia {
+      for var backup in ready {
+        try Task.checkCancellation()
+        currentBackupDay = backup.day
+        let dailyConfiguration = configuration.forDay(backup.day)
+        do {
+          let uploaded: WebDAVMediaManifest
+          if let mediaProvider {
+            uploaded = try await mediaProvider(
+              dailyConfiguration, backup.snapshot.activities, backup.screenshots)
+          } else {
+            uploaded = try await uploadMedia(
+              configuration: dailyConfiguration, activities: backup.snapshot.activities,
+              screenshots: backup.screenshots)
+          }
+          backup.snapshot.media = backup.snapshot.media?.merging(uploaded) ?? uploaded
+          await reportPhase(String(localized: "Publishing media index…"))
+          try await publish(backup.snapshot, configuration: dailyConfiguration)
+        } catch {
+          let detail = "\(backup.day): \(Self.message(for: error))"
+          if mustStopSync(after: error) {
+            if timelinesComplete { throw WebDAVTimelineSyncError.mediaIncomplete(detail) }
+            throw WebDAVTimelineSyncError.dailyBackupsIncomplete((failures + [detail]).joined(separator: "\n"))
+          }
+          failures.append(detail)
+        }
+      }
+    }
+    if !failures.isEmpty {
+      let detail = failures.joined(separator: "\n")
+      if timelinesComplete { throw WebDAVTimelineSyncError.mediaIncomplete(detail) }
+      throw WebDAVTimelineSyncError.dailyBackupsIncomplete(detail)
     }
     if reportsStatus { WebDAVTimelinePreferences.lastSyncAt = Date() }
     return snapshot.activities.count
+  }
+
+  private func mustStopSync(after error: Error) -> Bool {
+    if Task.isCancelled || error is CancellationError { return true }
+    if let urlError = error as? URLError {
+      return [.cancelled, .notConnectedToInternet, .cannotConnectToHost, .dnsLookupFailed].contains(urlError.code)
+    }
+    if case WebDAVTimelineSyncError.requestFailed(_, let status, _) = error {
+      return status == 401 || status == 403
+    }
+    return error as? WebDAVTimelineSyncError == .redirected
+  }
+
+  func createDirectory(_ url: URL, configuration: WebDAVConfiguration) async throws {
+    var request = authenticatedRequest(url: url, method: "MKCOL", configuration: configuration)
+    request.setValue("0", forHTTPHeaderField: "Content-Length")
+    let (data, response) = try await send(request)
+    guard let http = response as? HTTPURLResponse else { throw WebDAVTimelineSyncError.invalidResponse }
+    guard (200..<300).contains(http.statusCode) || http.statusCode == 405 else {
+      throw requestError(method: "MKCOL", response: http, data: data)
+    }
   }
 
   private func previousMedia(configuration: WebDAVConfiguration) async throws -> WebDAVMediaManifest? {

@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A backup contains an invalid date. No daily backup was uploaded.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "备份数据包含无效日期，未上传任何按日备份。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "備份資料包含無效日期，未上傳任何按日備份。" } }
+      }
+    },
+    "Some daily backups did not complete. Retry to finish syncing. %@": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "部分日期备份未完成，请重试以继续同步。%@" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "部分日期備份未完成，請重試以繼續同步。%@" } }
+      }
+    },
+    "Daily layout: YYYY-MM-DD/%@ and YYYY-MM-DD/media/.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "按日存储：YYYY-MM-DD/%@ 和 YYYY-MM-DD/media/。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "按日儲存：YYYY-MM-DD/%@ 與 YYYY-MM-DD/media/。" } }
+      }
+    },
+    "Each YYYY-MM-DD folder contains that day's timeline and media, following Dayflow's 4 AM day boundary. Only locally retained recordings can be uploaded; videos spanning days are copied to each day's folder. Existing remote media is kept. Files are not end-to-end encrypted. Use a separate folder for each recording Mac.": {
+      "localizations": {
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "每个 YYYY-MM-DD 文件夹包含当天的时间线和媒体，按 Dayflow 凌晨 4 点换日。只能上传本地仍保留的录屏；跨日视频会复制到各自日期目录。已有远端媒体会保留。文件未端到端加密，请为每台录制 Mac 使用独立目录。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "每個 YYYY-MM-DD 資料夾包含當天的時間軸與媒體，按 Dayflow 凌晨 4 點換日。只能上傳本機仍保留的錄影；跨日影片會複製到各自日期目錄。既有遠端媒體會保留。檔案未端對端加密，請為每台錄製 Mac 使用獨立目錄。" } }
+      }
+    },
     "Keychain access is locked or requires approval. Use Unlock saved password in WebDAV settings.": {
       "localizations": {
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "钥匙串已锁定或需要授权。请在 WebDAV 设置中点击“解锁已保存的密码”。" } },

@@ -61,6 +61,10 @@ struct SettingsDataTabView: View {
           placeholder: WebDAVTimelinePreferences.defaultRemotePath,
           text: $webDAVViewModel.remotePath
         )
+        Text("Daily layout: YYYY-MM-DD/\(WebDAVTimelinePreferences.snapshotFilename) and YYYY-MM-DD/media/.")
+          .font(.custom("Figtree", size: 12))
+          .foregroundColor(SettingsStyle.secondary)
+          .fixedSize(horizontal: false, vertical: true)
 
         SettingsRow(
           label: String(localized: "Automatic sync"),
@@ -99,7 +103,7 @@ struct SettingsDataTabView: View {
           .foregroundColor(SettingsStyle.secondary)
 
         Text(
-          "The sync folder contains timeline data and a media subfolder. Enabling media sync uploads retained recordings and thumbnails; completed files are skipped. Files are not end-to-end encrypted. Turning media sync off does not delete uploaded files. Use a separate folder for each recording Mac."
+          "Each YYYY-MM-DD folder contains that day's timeline and media, following Dayflow's 4 AM day boundary. Only locally retained recordings can be uploaded; videos spanning days are copied to each day's folder. Existing remote media is kept. Files are not end-to-end encrypted. Use a separate folder for each recording Mac."
         )
         .font(.custom("Figtree", size: 12))
         .foregroundColor(SettingsStyle.secondary)

@@ -28,6 +28,21 @@ struct WebDAVMediaManifest: Codable, Sendable, Equatable {
   let frames: [Frame]
   let thumbnails: [Thumbnail]
 
+  func merging(_ newer: WebDAVMediaManifest) -> WebDAVMediaManifest {
+    var assetsByID: [String: Asset] = [:]
+    var framesByID: [Int64: Frame] = [:]
+    var thumbnailsByID: [Int64: Thumbnail] = [:]
+    for asset in assets + newer.assets { assetsByID[asset.id] = asset }
+    for frame in frames + newer.frames { framesByID[frame.id] = frame }
+    for thumbnail in thumbnails + newer.thumbnails { thumbnailsByID[thumbnail.activityID] = thumbnail }
+    return .init(version: newer.version,
+      assets: assetsByID.values.sorted { $0.id < $1.id },
+      frames: framesByID.values.sorted {
+        $0.capturedAt == $1.capturedAt ? $0.id < $1.id : $0.capturedAt < $1.capturedAt
+      },
+      thumbnails: thumbnailsByID.values.sorted { $0.activityID < $1.activityID })
+  }
+
   static func asset(data: Data, extension suffix: String, mimeType: String) -> Asset {
     let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     return Asset(id: hash, path: "media/\(hash).\(suffix)", mimeType: mimeType, byteCount: data.count)
@@ -51,19 +66,13 @@ extension StorageManager {
 
 extension WebDAVTimelineSyncService {
   func uploadMedia(configuration: WebDAVConfiguration,
-    activities: [WebDAVTimelineSnapshot.Activity]) async throws -> WebDAVMediaManifest {
+    activities: [WebDAVTimelineSnapshot.Activity], screenshots: [Screenshot]) async throws -> WebDAVMediaManifest {
     guard let base = configuration.remoteFileURL?.deletingLastPathComponent() else {
       throw WebDAVTimelineSyncError.invalidResponse
     }
     let directory = base.appendingPathComponent("media", isDirectory: true)
-    let request = authenticatedRequest(url: directory, method: "MKCOL", configuration: configuration)
-    let (data, response) = try await send(request)
-    if (response as? HTTPURLResponse)?.statusCode != 405 {
-      try validateResponse(response, data: data, method: "MKCOL", accepted: 200..<300)
-    }
+    try await createDirectory(directory, configuration: configuration)
 
-    // Only finalized segments have file_size populated. Never upload the active writer.
-    let screenshots = try StorageManager.shared.webDAVScreenshots()
     var assets: [String: WebDAVMediaManifest.Asset] = [:]
     var paths: [String: String] = [:]
     var frames: [WebDAVMediaManifest.Frame] = []
